@@ -1,49 +1,23 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getDb, getFullClaim, listClaims, updateClaimSummary } from './lib/db.js';
-import { login } from './lib/auth.js';
+import { getDb, getFullClaim, listClaims, updateClaimSummary, updateDocumentSummary, buildDummyDocumentSummary } from './lib/db.js';
 import { summarizeClaim, summarizeAllClaims } from './lib/gemini.js';
+import type { FullClaim } from './types/claim.js';
 
 const PORT = 3000;
 
-async function getAuthedContext() {
-  const { browser, page, close } = await login();
-  const storage = await page.context().storageState();
-  await close();
-  const { chromium } = await import('playwright');
-  const b2 = await chromium.launch({ headless: true });
-  const ctx = await b2.newContext({ storageState: storage });
-  return { ctx, close: () => b2.close() };
-}
-
-let docCtx: Awaited<ReturnType<typeof getAuthedContext>> | null = null;
-
-async function proxyDocument(res: ServerResponse, docId: string): Promise<void> {
-  try {
-    if (!docCtx) docCtx = await getAuthedContext();
-    const apiReq = docCtx.ctx.request;
-    let apiRes = await apiReq.get(`https://docura-technical-screen.vercel.app/api/documents/${docId}/download`);
-    if (apiRes.status() === 401) {
-      await docCtx.close();
-      docCtx = null;
-      return proxyDocument(res, docId);
-    }
-    if (!apiRes.ok()) {
-      res.writeHead(apiRes.status(), { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `document fetch failed: ${apiRes.status()}` }));
-      return;
-    }
-    const body = await apiRes.body();
-    res.writeHead(200, {
-      'Content-Type': apiRes.headers()['content-type'] ?? 'application/pdf',
-      'Content-Disposition': `inline; filename="${docId}.pdf"`,
-    });
-    res.end(body);
-  } catch (err) {
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
-  }
+export function buildDummySummary(full: FullClaim): string {
+  const c = full.claim;
+  const payTotal = full.payments.reduce((s, p) => s + (p.amount ?? 0), 0);
+  const latestNote = full.notes.length ? full.notes[full.notes.length - 1].narrative ?? 'n/a' : 'n/a';
+  return (
+    `Claim ${c.claim_id} for ${c.claimant_name ?? 'unknown'} (${c.policy_number ?? 'no policy'}) ` +
+    `filed ${c.date_filed ?? 'unknown date'} is ${c.status ?? 'unknown status'}. ` +
+    `${c.description ?? ''} Total payments $${payTotal.toFixed(2)} across ${full.payments.length} payment(s), ` +
+    `${full.notes.length} note(s), ${full.documents.length} document(s), ${full.requirements.length} requirement(s). ` +
+    `Latest note: ${latestNote}`
+  );
 }
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
@@ -63,9 +37,40 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return json(res, listClaims());
   }
 
-  const docMatch = url.pathname.match(/^\/api\/documents\/(.+)\/download$/);
+  const docMatch = url.pathname.match(/^\/api\/documents\/(\d+)\/download$/);
   if (docMatch) {
-    return proxyDocument(res, decodeURIComponent(docMatch[1]));
+    const row = getDb().prepare('SELECT image_name, download_url FROM raw_documents WHERE id = ?').get(Number(docMatch[1])) as { image_name: string | null; download_url: string | null } | undefined;
+    if (!row?.download_url) return json(res, { error: 'document not found' }, 404);
+    try {
+      const body = await readFile(row.download_url);
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${row.image_name ?? `document-${docMatch[1]}.pdf`}"`,
+      });
+      return res.end(body);
+    } catch {
+      return json(res, { error: 'document file missing' }, 404);
+    }
+  }
+
+  const docDummyMatch = url.pathname.match(/^\/api\/documents\/(\d+)\/summary\/dummy$/);
+  if (docDummyMatch && req.method === 'POST') {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM raw_documents WHERE id = ?').get(decodeURIComponent(docDummyMatch[1])) as (import('./types/claim.js').RawDocument & { id: number }) | undefined;
+    if (!row) return json(res, { error: 'document not found' }, 404);
+    const summary = buildDummyDocumentSummary(row);
+    updateDocumentSummary(row.id, summary);
+    return json(res, { id: row.id, summary });
+  }
+
+  const dummyMatch = url.pathname.match(/^\/api\/claims\/(.+)\/summary\/dummy$/);
+  if (dummyMatch && req.method === 'POST') {
+    const claimId = decodeURIComponent(dummyMatch[1]);
+    const full = getFullClaim(claimId);
+    if (!full) return json(res, { error: 'claim not found' }, 404);
+    const summary = buildDummySummary(full as FullClaim);
+    updateClaimSummary(claimId, summary);
+    return json(res, { claim_id: claimId, summary });
   }
 
   const summaryMatch = url.pathname.match(/^\/api\/claims\/(.+)\/summary$/);

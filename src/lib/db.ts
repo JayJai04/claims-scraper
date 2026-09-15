@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS raw_documents (
   category      TEXT,
   image_name    TEXT,
   pages         INTEGER,
-  download_url  TEXT
+  download_url  TEXT,
+  summary       TEXT
 );
 CREATE TABLE IF NOT EXISTS raw_payments (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +179,15 @@ export function getFullClaim(claimId: string): FullClaim | null {
 export function updateClaimSummary(claimId: string, summary: string): void {
   const database = getDb();
   database.prepare('UPDATE raw_claims SET summary = ? WHERE claim_id = ?').run(summary, claimId);
+}
+
+export function updateDocumentSummary(docId: number, summary: string): void {
+  const database = getDb();
+  database.prepare('UPDATE raw_documents SET summary = ? WHERE id = ?').run(summary, docId);
+}
+
+export function buildDummyDocumentSummary(d: RawDocument): string {
+  return `${d.category ?? 'Document'} dated ${d.document_date ?? 'unknown date'}: ${d.image_name ?? 'unnamed'} (${d.pages ?? '?'} pages).`;
 }
 
 export type { FullClaim, RawDocument, RawNote, RawPayment, RawRequirement };

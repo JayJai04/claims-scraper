@@ -30,7 +30,10 @@ th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
 th { background: #f5f5f5; }
 .money { text-align: right; font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; font-size: 11px; background: #eee; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
-#summary { background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin: 16px 0; white-space: pre-wrap; word-break: break-word; }
+#summary { background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin: 16px 0; word-break: break-word; }
+#summary .sum-title { font-weight: bold; margin-bottom: 6px; }
+#summary ul { margin: 0; padding-left: 18px; }
+#summary li { margin: 3px 0; }
 .summarize-btn { padding: 6px 14px; font-size: 13px; cursor: pointer; }
 </style>
 </head>
@@ -38,9 +41,16 @@ th { background: #f5f5f5; }
 <div id="list-pane">
   <input id="search" type="search" placeholder="Search claim, claimant, policy...">
   <select id="status-filter"><option value="">All statuses</option></select>
+  <label style="margin:0 12px 12px;font-size:13px"><input type="checkbox" id="summarized-only"> Only with summary</label>
   <div id="list"><p style="padding:12px">Loading...</p></div>
 </div>
 <div id="detail-pane"><p>Select a claim.</p></div>
+<dialog id="doc-dialog" style="border:1px solid #ccc;border-radius:8px;padding:16px 20px;max-width:640px;width:85%">
+  <h3 id="doc-dialog-title" style="margin:0 0 2px"></h3>
+  <p id="doc-dialog-meta" style="margin:0 0 10px;color:#666;font-size:12px"></p>
+  <div id="doc-dialog-summary" style="white-space:pre-wrap;word-break:break-word"></div>
+  <p style="margin:14px 0 0"><a id="doc-dialog-pdf" href="#" target="_blank">Open PDF</a> · <button onclick="document.getElementById('doc-dialog').close()">Close</button></p>
+</dialog>
 <script>
 let claims = [];
 let activeTab = 'notes';
@@ -56,14 +66,19 @@ async function init() {
   }
   document.getElementById('search').addEventListener('input', renderList);
   sel.addEventListener('change', renderList);
+  document.getElementById('summarized-only').addEventListener('change', renderList);
+  document.getElementById('summarized-only').checked = true;
   renderList();
-  if (claims.length) selectClaim(claims[0].claim_id);
+  const visible = filtered();
+  if (visible.length) selectClaim(visible[0].claim_id);
 }
 
 function filtered() {
   const q = document.getElementById('search').value.toLowerCase();
   const st = document.getElementById('status-filter').value;
+  const onlySum = document.getElementById('summarized-only').checked;
   return claims.filter(c => {
+    if (onlySum && !c.summary) return false;
     if (st && c.status !== st) return false;
     if (!q) return true;
     return [c.claim_id, c.claimant_name, c.policy_number, c.description].some(v => (v || '').toLowerCase().includes(q));
@@ -135,23 +150,78 @@ function setTab(t) {
   pane._full = f;
 }
 
+function generalSummary(c, f) {
+  const pays = f.payments || [];
+  const paid = pays.reduce((s, p) => s + (p.amount ?? 0), 0);
+  const reqs = f.requirements || [];
+  const notes = f.notes || [];
+  let html = `<div class="sum-title">${c.claim_id} — ${c.status || 'Unknown status'}</div><ul>`;
+  html += `<li><b>Filed</b>: ${c.date_filed || '—'} by ${c.claimant_name || '—'} · Policy ${c.policy_number || '—'}</li>`;
+  if (c.description) html += `<li><b>Loss</b>: ${c.description}</li>`;
+  if (c.amount != null) html += `<li><b>Claimed amount</b>: ${money(c.amount)}</li>`;
+  if (pays.length) {
+    const fully = c.amount != null && paid >= c.amount ? ' — fully paid' : '';
+    html += `<li><b>Paid</b>: ${money(paid)} across ${pays.length} payment${pays.length === 1 ? '' : 's'}${fully}</li>`;
+  } else {
+    html += `<li><b>Paid</b>: no payments yet</li>`;
+  }
+  if ((f.documents || []).length) {
+    html += `<li><b>Documents</b> (${f.documents.length}): ` + f.documents.map(d => `${d.category || d.image_name || 'Untitled'} (${d.document_date || 'undated'})`).join(', ') + '</li>';
+  } else {
+    html += `<li><b>Documents</b>: none on file</li>`;
+  }
+  if (reqs.length) {
+    const open = reqs.filter(r => (r.activity_status || '').toLowerCase() !== 'complete').length;
+    html += `<li><b>Requirements</b> (${reqs.length}, ${open} open): ` + reqs.map(r => `${r.requirement || '?'}${r.activity_status ? ' — ' + r.activity_status : ''}`).join('; ') + '</li>';
+  }
+  if (notes.length) {
+    const last = notes[notes.length - 1];
+    html += `<li><b>Latest note</b> (${last.entry_datetime || 'undated'}${last.entered_by ? ', ' + last.entered_by : ''}): ${last.narrative || '—'}</li>`;
+  }
+  return html + '</ul>';
+}
+
 function renderTab(t, f) {
   if (t === 'summary') {
     const c = f.claim;
-    if (c.summary) return `<div id="summary">${c.summary}</div>`;
-    return `<div id="summary"><p style="color:#999">No summary yet. Click below to generate.</p></div><button class="summarize-btn" onclick="genSummary('${c.claim_id}')">Generate Summary</button><span id="summary-loading" style="display:none">...</span>`;
+    const docs = (f.documents || []).filter(d => d.summary);
+    let html = `<div id="summary">${generalSummary(c, f)}</div>`;
+    if (!c.summary) {
+      html += `<button class="summarize-btn" onclick="genSummary('${c.claim_id}')">Generate Summary</button><span id="summary-loading" style="display:none">...</span>`;
+    }
+    if (docs.length) {
+      html += `<h3>Document summaries (${docs.length})</h3>` + docs.map(d =>
+        `<p><b>${d.image_name || d.category || ''}</b> <span style="color:#999">(${d.document_date || ''} · ${d.category || ''})</span><br>${d.summary}</p>`
+      ).join('');
+    }
+    return html;
   }
-  if (!rows.length) return '<p>No records.</p>';
   const rows = f[t];
+  if (!rows.length) return '<p>No records.</p>';
   if (t === 'notes') return `<table><tr><th>Date/Time</th><th>By</th><th>Narrative</th></tr>${rows.map(n =>
     `<tr><td>${n.entry_datetime || ''}</td><td>${n.entered_by || ''}</td><td>${n.narrative || ''}</td></tr>`).join('')}</table>`;
-  if (t === 'documents') return `<table><tr><th>Date</th><th>Category</th><th>File</th><th>Pages</th><th>View</th></tr>${rows.map(d => {
-    const docId = (d.download_url || '').match(/\/documents\/([^/]+)\/download/)?.[1];
-    return `<tr><td>${d.document_date || ''}</td><td>${d.category || ''}</td><td>${d.image_name || ''}</td><td>${d.pages ?? ''}</td><td>${docId ? `<a href="/api/documents/${docId}/download" target="_blank">Open</a>` : ''}</td></tr>`;}).join('')}</table>`;
+  if (t === 'documents') {
+    const docRows = {};
+    const table = `<table><tr><th>Date</th><th>Category</th><th>File</th><th>Pages</th><th>View</th></tr>${rows.map(d => {
+      docRows[d.id] = d;
+      return `<tr><td>${d.document_date || ''}</td><td>${d.category || ''}</td><td>${d.image_name || ''}</td><td>${d.pages ?? ''}</td><td><a href="#" onclick="viewDoc(${d.id});return false;">View</a></td></tr>`;}).join('')}</table>`;
+    window._docRows = docRows;
+    return table;
+  }
   if (t === 'payments') return `<table><tr><th>Date</th><th>Type</th><th>Payee</th><th>Status</th><th>Amount</th></tr>${rows.map(p =>
     `<tr><td>${p.transaction_date || ''}</td><td>${p.payment_type || ''}</td><td>${p.payee || ''}</td><td>${p.status || ''}</td><td class="money">${money(p.amount)}</td></tr>`).join('')}</table>`;
   return `<table><tr><th>Created</th><th>Due</th><th>Requirement</th><th>Status</th></tr>${rows.map(r =>
     `<tr><td>${r.created || ''}</td><td>${r.due_date || ''}</td><td>${r.requirement || ''}</td><td>${r.activity_status || ''}</td></tr>`).join('')}</table>`;
+}
+
+function viewDoc(id) {
+  const d = (window._docRows || {})[id];
+  if (!d) return;
+  document.getElementById('doc-dialog-title').textContent = d.image_name || d.category || 'Document';
+  document.getElementById('doc-dialog-meta').textContent = [d.document_date, d.category, d.pages != null ? d.pages + (d.pages === 1 ? ' page' : ' pages') : ''].filter(Boolean).join(' · ');
+  document.getElementById('doc-dialog-summary').textContent = d.summary || 'No summary available.';
+  document.getElementById('doc-dialog-pdf').href = '/api/documents/' + d.id + '/download';
+  document.getElementById('doc-dialog').showModal();
 }
 
 async function genSummary(id) {

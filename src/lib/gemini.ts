@@ -1,8 +1,12 @@
 import type { FullClaim } from '../types/claim.js';
 
 const API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = 'gemini-1.5-flash';
+const MODEL = 'gemini-3.6-flash';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1/models/${MODEL}:generateContent?key=${API_KEY}`;
+
+const RETRYABLE_STATUS = new Set([429, 503]);
+
+const MAX_RETRIES = 10;
 
 export function buildPrompt(full: FullClaim): string {
   const c = full.claim;
@@ -43,25 +47,33 @@ export async function summarizeClaim(full: FullClaim): Promise<string> {
     throw new Error('GEMINI_API_KEY env var not set');
   }
   const prompt = buildPrompt(full);
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
-    }),
-  });
-  if (!res.ok) {
-    const err: GeminiError = new Error(`Gemini API error: ${res.status}`);
-    err.status = res.status;
-    try {
-      const body = await res.text();
-      err.message += ` ${body.slice(0, 500)}`;
-    } catch {}
-    throw err;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+      }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '[No summary generated]';
+    }
+    const bodyText = await res.text().catch(() => '');
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_RETRIES) {
+      const err: GeminiError = new Error(`Gemini API error: ${res.status}`);
+      err.status = res.status;
+      err.message += ` ${bodyText.slice(0, 500)}`;
+      throw err;
+    }
+    const retryMatch = bodyText.match(/retry in\s+([\d.]+)s/iu);
+    const parsedWait = retryMatch ? parseFloat(retryMatch[1]) : null;
+    const wait = (parsedWait ?? 30) * 1000;
+    console.warn(`  429, waiting ${(wait / 1000).toFixed(0)}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+    await new Promise((r) => setTimeout(r, wait));
   }
-  const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '[No summary generated]';
+  throw new Error('Unreachable');
 }
 
 export async function summarizeClaimById(claimId: string): Promise<string> {

@@ -244,6 +244,7 @@ export async function parseDocumentsTab(page: Page, claimId: string): Promise<Ra
       image_name: textOrNull(cells, 2),
       pages: parsePages(cells[3] ?? ''),
       download_url: href ? new URL(href, page.url()).toString() : null,
+      summary: null,
     });
   }
   return docs;

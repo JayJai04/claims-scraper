@@ -23,6 +23,7 @@ export interface RawDocument {
   image_name: string | null;
   pages: number | null;
   download_url: string | null;
+  summary: string | null;
 }
 
 export interface RawPayment {

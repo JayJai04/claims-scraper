@@ -21,6 +21,7 @@
   "homepage": "https://github.com/JayJai04/claims-scraper#readme",
   "dependencies": {
     "better-sqlite3": "^13.0.3",
+    "pdfjs-dist": "^6.3.289",
     "playwright": "^1.63.0"
   },
   "devDependencies": {
