@@ -20,6 +20,7 @@
   "homepage": "https://github.com/JayJai04/claims-scraper#readme",
   "dependencies": {
     "node-fetch": "^3.3.2",
+    "playwright": "^1.63.0",
     "tough-cookie": "^6.0.2"
   },
   "devDependencies": {
