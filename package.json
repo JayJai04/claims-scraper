@@ -1,0 +1,31 @@
+{
+  "name": "claims-scraper",
+  "version": "1.0.0",
+  "description": "Scrapes claims management site, stores raw data, transforms and stores in a new table.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JayJai04/claims-scraper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/JayJai04/claims-scraper/issues"
+  },
+  "homepage": "https://github.com/JayJai04/claims-scraper#readme",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "tough-cookie": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.4.5"
+  }
+}
