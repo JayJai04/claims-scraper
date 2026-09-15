@@ -19,14 +19,14 @@
   },
   "homepage": "https://github.com/JayJai04/claims-scraper#readme",
   "dependencies": {
-    "node-fetch": "^3.3.2",
-    "playwright": "^1.63.0",
-    "tough-cookie": "^6.0.2"
+    "better-sqlite3": "^13.0.3",
+    "playwright": "^1.63.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.5.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.13",
-    "typescript": "^5.4.5"
+    "typescript": "^5.9.3"
   }
 }

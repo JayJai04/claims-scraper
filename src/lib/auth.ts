@@ -22,10 +22,14 @@ export async function login(): Promise<AuthResult> {
   await page.fill('input[name="password"]', process.env.SCRAPER_PASSWORD || '');
 
   // Step 3: Click Log On and wait for claims page
-  await Promise.all([
-    page.waitForURL('**/claims'),
-    page.click('button:has-text("Log On")'),
-  ]);
+  try {
+    await Promise.all([
+      page.waitForURL('**/claims', { timeout: 15000 }),
+      page.click('button:has-text("Log On")'),
+    ]);
+  } catch {
+    throw new Error('Login failed: did not reach /claims (check credentials)');
+  }
 
   return {
     browser,

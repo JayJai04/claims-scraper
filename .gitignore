@@ -2,5 +2,8 @@ node_modules/
 dist/
 build/
 *.log
+*.db
+.env
 .env*.local
 .DS_Store
+db-viewer.html
