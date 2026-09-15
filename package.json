@@ -4,7 +4,8 @@
   "description": "Scrapes claims management site, stores raw data, transforms and stores in a new table.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "ui": "tsx src/server.ts"
   },
   "repository": {
     "type": "git",

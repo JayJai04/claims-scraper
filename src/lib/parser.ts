@@ -67,6 +67,7 @@ function emptyClaim(): RawClaim {
     status: null,
     amount: null,
     description: null,
+    summary: null,
   };
 }
 

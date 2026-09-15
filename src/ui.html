@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claims Browser</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
+#list-pane { width: 380px; border-right: 1px solid #ccc; display: flex; flex-direction: column; }
+#search { margin: 12px; padding: 8px; font-size: 14px; }
+#status-filter { margin: 0 12px 12px; padding: 8px; font-size: 14px; }
+#list { overflow-y: auto; flex: 1; }
+.claim-row { padding: 10px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+.claim-row:hover { background: #f5f5f5; }
+.claim-row.active { background: #e3f2fd; }
+.claim-row .id { font-weight: bold; }
+.claim-row .meta { font-size: 12px; color: #666; margin-top: 2px; }
+#detail-pane { flex: 1; overflow-y: auto; padding: 20px; }
+#detail-pane h2 { margin-top: 0; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; margin-bottom: 16px; }
+.kv dt { color: #666; }
+.kv dd { margin: 0; }
+.tabs { display: flex; gap: 4px; margin: 16px 0 8px; }
+.tabs button { padding: 6px 14px; cursor: pointer; border: 1px solid #ccc; background: #f9f9f9; }
+.tabs button.active { background: #e3f2fd; font-weight: bold; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+th { background: #f5f5f5; }
+.money { text-align: right; font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; font-size: 11px; background: #eee; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
+#summary { background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin: 16px 0; white-space: pre-wrap; word-break: break-word; }
+.summarize-btn { padding: 6px 14px; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="list-pane">
+  <input id="search" type="search" placeholder="Search claim, claimant, policy...">
+  <select id="status-filter"><option value="">All statuses</option></select>
+  <div id="list"><p style="padding:12px">Loading...</p></div>
+</div>
+<div id="detail-pane"><p>Select a claim.</p></div>
+<script>
+let claims = [];
+let activeTab = 'notes';
+
+async function init() {
+  claims = await (await fetch('/api/claims')).json();
+  const statuses = [...new Set(claims.map(c => c.status).filter(Boolean))].sort();
+  const sel = document.getElementById('status-filter');
+  for (const s of statuses) {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  }
+  document.getElementById('search').addEventListener('input', renderList);
+  sel.addEventListener('change', renderList);
+  renderList();
+  if (claims.length) selectClaim(claims[0].claim_id);
+}
+
+function filtered() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const st = document.getElementById('status-filter').value;
+  return claims.filter(c => {
+    if (st && c.status !== st) return false;
+    if (!q) return true;
+    return [c.claim_id, c.claimant_name, c.policy_number, c.description].some(v => (v || '').toLowerCase().includes(q));
+  });
+}
+
+function money(v) {
+  return v == null ? '' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+function renderList() {
+  const list = filtered();
+  document.getElementById('list').innerHTML = list.map(c => `
+    <div class="claim-row" data-id="${c.claim_id}" onclick="selectClaim('${c.claim_id}')">
+      <div class="id">${c.claim_id}</div>
+      <div class="meta">${c.claimant_name || ''} · ${c.status || ''}</div>
+      <div class="meta">${c.policy_number || ''}${c.amount != null ? ' · ' + money(c.amount) : ''}</div>
+    </div>`).join('') || '<p style="padding:12px">No matches.</p>';
+}
+
+async function selectClaim(id) {
+  document.querySelectorAll('.claim-row').forEach(r => r.classList.toggle('active', r.dataset.id === id));
+  const pane = document.getElementById('detail-pane');
+  pane.innerHTML = '<p>Loading...</p>';
+  const f = await (await fetch('/api/claims/' + encodeURIComponent(id))).json();
+  const c = f.claim;
+  pane.innerHTML = `
+    <h2>${c.claim_id} <span class="badge">${c.status || ''}</span></h2>
+    <dl class="kv">
+      <dt>Claimant</dt><dd>${c.claimant_name || ''}</dd>
+      <dt>Policy</dt><dd>${c.policy_number || ''}</dd>
+      <dt>Date filed</dt><dd>${c.date_filed || ''}</dd>
+      <dt>Total amount</dt><dd>${money(c.amount)}</dd>
+      <dt>Description</dt><dd>${c.description || ''}</dd>
+    </dl>
+    <div class="tabs">
+      <button class="${activeTab === 'summary' ? 'active' : ''}" onclick="setTab('summary')">Summary</button>
+      ${['notes', 'documents', 'payments', 'requirements'].map(t =>
+        `<button class="${t === activeTab ? 'active' : ''}" onclick="setTab('${t}')">${t} (${f[t].length})</button>`).join('')}
+    </div>
+    <div id="tab-body">${renderTab(activeTab, f)}</div>
+    <script>void 0;<\/script>`;
+  pane._full = f;
+}
+
+function setTab(t) {
+  activeTab = t;
+  const pane = document.getElementById('detail-pane');
+  if (!pane._full) return;
+  pane._full.tabs = ['summary'];
+  const f = pane._full;
+  const c = f.claim;
+  pane.innerHTML = `
+    <h2>${c.claim_id} <span class="badge">${c.status || ''}</span></h2>
+    <dl class="kv">
+      <dt>Claimant</dt><dd>${c.claimant_name || ''}</dd>
+      <dt>Policy</dt><dd>${c.policy_number || ''}</dd>
+      <dt>Date filed</dt><dd>${c.date_filed || ''}</dd>
+      <dt>Total amount</dt><dd>${money(c.amount)}</dd>
+      <dt>Description</dt><dd>${c.description || ''}</dd>
+    </dl>
+    <div class="tabs">
+      <button class="${activeTab === 'summary' ? 'active' : ''}" onclick="setTab('summary')">Summary</button>
+      ${['notes', 'documents', 'payments', 'requirements'].map(t =>
+        `<button class="${t === activeTab ? 'active' : ''}" onclick="setTab('${t}')">${t} (${f[t].length})</button>`).join('')}
+    </div>
+    <div id="tab-body">${renderTab(activeTab, f)}</div>
+    <script>void 0;<\/script>`;
+  pane._full = f;
+}
+
+function renderTab(t, f) {
+  if (t === 'summary') {
+    const c = f.claim;
+    if (c.summary) return `<div id="summary">${c.summary}</div>`;
+    return `<div id="summary"><p style="color:#999">No summary yet. Click below to generate.</p></div><button class="summarize-btn" onclick="genSummary('${c.claim_id}')">Generate Summary</button><span id="summary-loading" style="display:none">...</span>`;
+  }
+  if (!rows.length) return '<p>No records.</p>';
+  const rows = f[t];
+  if (t === 'notes') return `<table><tr><th>Date/Time</th><th>By</th><th>Narrative</th></tr>${rows.map(n =>
+    `<tr><td>${n.entry_datetime || ''}</td><td>${n.entered_by || ''}</td><td>${n.narrative || ''}</td></tr>`).join('')}</table>`;
+  if (t === 'documents') return `<table><tr><th>Date</th><th>Category</th><th>File</th><th>Pages</th><th>View</th></tr>${rows.map(d => {
+    const docId = (d.download_url || '').match(/\/documents\/([^/]+)\/download/)?.[1];
+    return `<tr><td>${d.document_date || ''}</td><td>${d.category || ''}</td><td>${d.image_name || ''}</td><td>${d.pages ?? ''}</td><td>${docId ? `<a href="/api/documents/${docId}/download" target="_blank">Open</a>` : ''}</td></tr>`;}).join('')}</table>`;
+  if (t === 'payments') return `<table><tr><th>Date</th><th>Type</th><th>Payee</th><th>Status</th><th>Amount</th></tr>${rows.map(p =>
+    `<tr><td>${p.transaction_date || ''}</td><td>${p.payment_type || ''}</td><td>${p.payee || ''}</td><td>${p.status || ''}</td><td class="money">${money(p.amount)}</td></tr>`).join('')}</table>`;
+  return `<table><tr><th>Created</th><th>Due</th><th>Requirement</th><th>Status</th></tr>${rows.map(r =>
+    `<tr><td>${r.created || ''}</td><td>${r.due_date || ''}</td><td>${r.requirement || ''}</td><td>${r.activity_status || ''}</td></tr>`).join('')}</table>`;
+}
+
+async function genSummary(id) {
+  const btn = document.querySelector('.summarize-btn');
+  const loading = document.getElementById('summary-loading');
+  if (btn) btn.style.display = 'none';
+  if (loading) loading.style.display = 'inline';
+  try {
+    const res = await fetch('/api/claims/' + encodeURIComponent(id) + '/summary', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('summary').innerHTML = `<p style="color:red">${data.error}</p>`;
+    } else {
+      document.getElementById('summary').innerHTML = data.summary;
+      const row = claims.find(c => c.claim_id === id);
+      if (row) row.summary = data.summary;
+    }
+  } catch (e) {
+    document.getElementById('summary').innerHTML = `<p style="color:red">${e}</p>`;
+  }
+  if (loading) loading.style.display = 'none';
+}
+
+init();
+</script>
+</body>
+</html>

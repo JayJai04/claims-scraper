@@ -6,6 +6,7 @@ export interface RawClaim {
   status: string | null;
   amount: number | null;
   description: string | null;
+  summary: string | null;
 }
 
 export interface RawNote {
